@@ -7,16 +7,17 @@ _epochs_offset_timestamp: "1692835200"
 _rewards_token: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
 _rewards_distributor: "0x227f65131A261548b057215bB1D5Ab2997964C7d"
 _deposit_validator: "0x0000000000000000000000000000000000000000"
-_window_preepoch_duration: "1800"
+_window_preepoch_duration: "5400"
 _window_postepoch_duration: "1800"
 ```
 
-There are 5 main contracts:
+There are 6 main contracts:
 
 ## Core Contracts
-1. **`RewardsVault.sol`**: Generic token storage vault for holding rewards tokens
+1. **`RewardsVault.sol`**: Generic token storage vault for holding rewards tokens. Automatically deployed by the PermanentLocksPool contract.
 2. **`SwapperV1.sol`**: After rewards are collected, the PermanentLocksPool transfers them to the swapper, which swaps them for stablecoins (usually USDC) and sends them back to the pool. THIS CONTRACT IS REPLACEABLE - we can deploy new swapper versions and update the reference in the pool contract.
 3. **`DepositValidatorV1.sol`**: Validates deposits for PermanentLocksPool contracts by checking minimum lock requirements. THIS CONTRACT IS REPLACEABLE - we can deploy new validator versions and update the reference in the pool contract.
+4. **`PermanentLocksPoolV1.sol`**: Main pool contract that manages user deposits, voting, and reward distribution using batched individual voting strategy. Users deposit veNFT locks and receive proportional rewards.
 
 ## Pool Contract Versions
 We have 3 versions of the permanent locks pool contract, each using different voting strategies:
@@ -42,11 +43,11 @@ We have 3 versions of the permanent locks pool contract, each using different vo
 ## The Flow (applies to all pool versions):
 - User deposits permanent lock NFTs into one of the PermanentLocksPool contracts
 - The contract calculates the user's share based on their lock's voting power
-- User can withdraw their share any time, only after one epoch since deposit, and only outside of *Special Window*
-- *Special Window* is a period when Aeroclub bots perform critical actions in the pool contract, saving snapshots, etc.
+- User can withdraw their locks any time, only outside of *Special Window*
+- *Special Window* is a period when Autopilot bots perform critical actions in the pool contract, saving snapshots, etc.
 
 ## Voting Process (varies by version):
-- **V1**: At 2 hours before epoch end, the *Special Window* starts. Users depositing during this time are counted for the next epoch. The bot votes with all locks in multiple transactions, batching locks until gas limit is reached
+- **V1**: At ~2 hours before epoch end, the *Special Window* starts. Users depositing during this time are counted for the next epoch. The bot votes with all locks in multiple transactions, batching locks until gas limit is reached
 - **V2**: Uses delegation to managed NFT - single transaction voting (requires Aerodrome whitelist)  
 - **V3**: Uses merge/split flow - merges all locks into one for voting (requires Aerodrome whitelist for split)
 
@@ -73,9 +74,9 @@ The PermanentLocksPool contracts implement a sophisticated epoch management syst
 - Each epoch has its own weight calculation, ensuring rewards are distributed only to participants who were eligible for that epoch's voting
 
 ### Special Window Logic
-- During the Special Window (2 hours before epoch end), user deposits are assigned to the NEXT epoch
+- During the Special Window (~2 hours before epoch end), user deposits are assigned to the NEXT epoch
 - This ensures deposits during critical bot operations don't interfere with current epoch calculations
-- Weight assignment logic: `if (current_epoch != last_snapshot_id) { deposit_weight_goes_to_current_epoch } else { deposit_weight_goes_to_next_epoch }`
+- Weight assignment logic: `if (_isInSpecialWindow(last_snapshot_id)) { deposit_weight_goes_to_next_epoch } else { deposit_weight_goes_to_current_epoch }`
 
 ### Epoch Gap Handling
 - When multiple epochs are missed, the snapshot functions handle gaps intelligently
