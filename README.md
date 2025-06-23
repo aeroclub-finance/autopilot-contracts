@@ -1,3 +1,16 @@
+## Expected production deployment params:
+
+```
+_nft_locks_contract: "0xeBf418Fe2512e7E6bd9b87a8F0f294aCDC67e6B4"
+_voter_contract: "0x16613524e02ad97eDfeF371bC883F2F5d6C480A5"
+_epochs_offset_timestamp: "1692835200"
+_rewards_token: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+_rewards_distributor: "0x227f65131A261548b057215bB1D5Ab2997964C7d"
+_deposit_validator: "0x0000000000000000000000000000000000000000"
+_window_preepoch_duration: "1800"
+_window_postepoch_duration: "1800"
+```
+
 There are 5 main contracts:
 
 ## Core Contracts
