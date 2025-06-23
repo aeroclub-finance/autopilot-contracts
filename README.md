@@ -11,7 +11,7 @@ _window_preepoch_duration: "5400"
 _window_postepoch_duration: "1800"
 ```
 
-There are 6 main contracts:
+There are 4 main contracts:
 
 ## Core Contracts
 1. **`RewardsVault.sol`**: Generic token storage vault for holding rewards tokens. Automatically deployed by the PermanentLocksPool contract.
