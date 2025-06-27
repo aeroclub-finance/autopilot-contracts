@@ -83,16 +83,16 @@ contract PermanentLocksPoolV1 {
     /// @notice acc_reward_scaled value at time when THIS lock was deposited
     /// @dev Used to calculate rewards earned since this lock's deposit
     uint256 reward_scaled_start;
-    /// @notice First snapshot ID that this lock is NOT eligible for
+    /// @notice First snapshot ID that this lock is eligible for
     /// @dev This lock can only claim rewards from snapshots >= this ID
     uint256 start_snapshot_id;
   }
   
   /// @notice Mapping from user address to array of their lock deposits
-  mapping(address => LockInfo[]) public userLocks;
+  mapping(address => LockInfo[]) public user_locks;
   
   /// @notice Mapping to track total number of locks per user
-  mapping(address => uint256) public userLockCount;
+  mapping(address => uint256) public user_locks_count;
 
   // ============================================================================
   // EVENTS
@@ -100,16 +100,18 @@ contract PermanentLocksPoolV1 {
 
   /// @notice Emitted when a user deposits a permanent lock into the vault
   /// @param user Address of the user making the deposit
-  /// @param deposited_nft_id Token ID of the deposited veNFT (gets merged)
+  /// @param deposited_nft_id Token ID of the deposited veNFT
   /// @param lock_index Index of this lock in user's lock array
   /// @param amount Voting power of the deposited lock
-  event Deposit(address indexed user, uint256 indexed deposited_nft_id, uint256 lock_index, uint256 amount);
+  /// @param start_snapshot_id Starting snapshot ID for this lock
+  /// @param reward_scaled_start Starting reward scaled value for this lock
+  event Deposit(address indexed user, uint256 indexed deposited_nft_id, uint256 lock_index, uint256 amount, uint256 start_snapshot_id, uint256 reward_scaled_start);
   
-  /// @notice Emitted when a user withdraws their share from the vault
+  /// @notice Emitted when a user withdraws a lock from the vault
   /// @param user Address of the user making the withdrawal
-  /// @param new_nft_id Token ID of the newly created veNFT for the user
-  /// @param amount Voting power of the withdrawn amount
-  event Withdraw(address indexed user, uint256 indexed new_nft_id, uint256 amount);
+  /// @param withdrawn_nft_id Token ID of the withdrawn veNFT
+  /// @param amount Voting power of the withdrawn lock
+  event Withdraw(address indexed user, uint256 indexed withdrawn_nft_id, uint256 amount);
   
   /// @notice Emitted when a user claims their accumulated rewards
   /// @param user Address of the user claiming rewards
@@ -119,7 +121,8 @@ contract PermanentLocksPoolV1 {
   /// @notice Emitted when a new reward snapshot is taken
   /// @param reward_amount Amount of rewards distributed in this snapshot
   /// @param snapshot_id ID of the snapshot (epoch ID)
-  event RewardsSnapshot(uint256 reward_amount, uint256 snapshot_id);
+  /// @param acc_reward_scaled Current accumulated reward scaled value
+  event RewardsSnapshot(uint256 reward_amount, uint256 snapshot_id, uint256 acc_reward_scaled);
   
   /// @notice Emitted when the swapper contract address is updated
   /// @param old_swapper Previous swapper contract address
@@ -159,6 +162,23 @@ contract PermanentLocksPoolV1 {
   /// @notice Emitted when deposits are paused or resumed
   /// @param paused Whether deposits are now paused
   event DepositsPausedUpdated(bool paused);
+
+  /// @notice Emitted when voting is completed
+  /// @param nft_ids Array of NFT IDs that voted
+  event VotingCompleted(uint256[] nft_ids);
+
+  /// @notice Emitted when voting rewards are claimed
+  /// @param nft_ids Array of NFT IDs that claimed rewards
+  event VotingRewardsClaimed(uint256[] nft_ids);
+
+  /// @notice Emitted when rebase rewards are claimed
+  /// @param nft_ids Array of NFT IDs that claimed rebase rewards
+  /// @param final_balances Array of final balances for each NFT
+  event RebaseRewardsClaimed(uint256[] nft_ids, uint256[] final_balances);
+
+  /// @notice Emitted when tokens are transferred to swapper
+  /// @param tokens Array of token addresses transferred
+  event SwapperFilled(address[] tokens);
 
   // ============================================================================
   // MODIFIERS
@@ -245,7 +265,7 @@ contract PermanentLocksPoolV1 {
       "Already voted in current epoch"
     );
     
-    uint256 current_lock_count = userLockCount[msg.sender];
+    uint256 current_lock_count = user_locks_count[msg.sender];
 
     require(
       nft_locks_contract.ownerOf(_lock_id) == msg.sender,
@@ -283,11 +303,11 @@ contract PermanentLocksPoolV1 {
       start_snapshot_id: eligible_epoch
     });
 
-    userLocks[msg.sender].push(new_lock);
-    lock_id_to_user_index[_lock_id] = userLockCount[msg.sender];
-    userLockCount[msg.sender]++;
+    user_locks[msg.sender].push(new_lock);
+    lock_id_to_user_index[_lock_id] = user_locks_count[msg.sender];
+    user_locks_count[msg.sender]++;
 
-    emit Deposit(msg.sender, _lock_id, current_lock_count, amount);
+    emit Deposit(msg.sender, _lock_id, current_lock_count, amount, eligible_epoch, acc_reward_scaled);
   }
 
   /// @notice Withdraws a specific lock by lock ID
@@ -299,31 +319,31 @@ contract PermanentLocksPoolV1 {
 
 		_isNotInSpecialWindowOrFail(last_snapshot_id);
 
-    require(userLockCount[msg.sender] > 0, "No locks found");
+    require(user_locks_count[msg.sender] > 0, "No locks found");
     
     // Claim rewards before withdrawing
     _claim(_lock_id);
     
-    uint256 lock_index = _getLockIndexOrFail(_lock_id);
+    uint256 lock_index = _getLockIndexOrFail(msg.sender, _lock_id);
     
     uint256 amount = nft_locks_contract.balanceOfNFT(_lock_id);
 
-    LockInfo storage lock_info = userLocks[msg.sender][lock_index];
+    LockInfo storage lock_info = user_locks[msg.sender][lock_index];
     if(lock_info.start_snapshot_id > last_snapshot_id) {
       total_tracked_weight[lock_info.start_snapshot_id] -= amount;
     } else {
       total_tracked_weight[last_snapshot_id] -= amount;
     }
     
-    uint256 last_index = userLockCount[msg.sender] - 1;
+    uint256 last_index = user_locks_count[msg.sender] - 1;
     if (lock_index != last_index) {
-      userLocks[msg.sender][lock_index] = userLocks[msg.sender][last_index];
+      user_locks[msg.sender][lock_index] = user_locks[msg.sender][last_index];
       // Update mapping for the moved lock
-      uint256 moved_lock_id = userLocks[msg.sender][lock_index].lock_id;
+      uint256 moved_lock_id = user_locks[msg.sender][lock_index].lock_id;
       lock_id_to_user_index[moved_lock_id] = lock_index;
     }
-    userLocks[msg.sender].pop();
-    userLockCount[msg.sender]--;
+    user_locks[msg.sender].pop();
+    user_locks_count[msg.sender]--;
     
     // Clear mapping for withdrawn lock
     delete lock_id_to_user_index[_lock_id];
@@ -338,7 +358,7 @@ contract PermanentLocksPoolV1 {
   /// @param _lock_id Lock ID to claim rewards from
   function claim(uint256 _lock_id) external {
     _emergencySnapshot();
-    require(userLockCount[msg.sender] > 0, "No locks found");
+    require(user_locks_count[msg.sender] > 0, "No locks found");
     _claim(_lock_id);
   }
 
@@ -389,6 +409,8 @@ contract PermanentLocksPoolV1 {
       
       voter_contract.vote(nft_id, _pools, _percentages);
     }
+
+    emit VotingCompleted(_nft_ids);
   }
 
   /// @notice Claims voting rewards (bribes) from gauges for multiple NFTs
@@ -418,10 +440,12 @@ contract PermanentLocksPoolV1 {
         nft_id
       );
     }
+
+    emit VotingRewardsClaimed(_nft_ids);
   }
 
   /// @notice Claims rebase rewards from RewardsDistributor for multiple NFTs
-  /// @dev Only permitted operators can call this during special window
+  /// @dev Only permitted operators can call this outside special window
   ///      This claims rebase rewards that are automatically added to each NFT
   /// @param _nft_ids Array of NFT IDs to claim rebase rewards for
   function claimRebaseRewards(uint256[] calldata _nft_ids) external onlyPermittedOperator {
@@ -458,23 +482,14 @@ contract PermanentLocksPoolV1 {
       int256 new_weight = int256(total_tracked_weight[last_snapshot_id]) + rebase_change;
       total_tracked_weight[last_snapshot_id] = new_weight > 0 ? uint256(new_weight) : 0;
     }
-  }
 
-  /// @notice Resets voting state for multiple NFTs using IVoter contract
-  /// @dev Only permitted operators can call this outside special window
-  ///      This is needed to reset NFT voting states when required
-  /// @param _nft_ids Array of NFT IDs to reset voting state for
-  function resetNfts(uint256[] calldata _nft_ids) external onlyPermittedOperator {
-    _isNotInSpecialWindowOrFail(last_snapshot_id);
-
-    require(_nft_ids.length > 0, "No NFT IDs provided");
-    
-    // Reset each NFT's voting state
+    // Get final balances for each NFT
+    uint256[] memory final_balances = new uint256[](_nft_ids.length);
     for (uint256 i = 0; i < _nft_ids.length; i++) {
-      uint256 nft_id = _nft_ids[i];
-      require(nft_locks_contract.ownerOf(nft_id) == address(this), "Contract doesn't own NFT");
-      voter_contract.reset(nft_id);
+      final_balances[i] = nft_locks_contract.balanceOfNFT(_nft_ids[i]);
     }
+
+    emit RebaseRewardsClaimed(_nft_ids, final_balances);
   }
 
   /// @notice Transfers accumulated reward tokens to the swapper contract
@@ -495,6 +510,8 @@ contract PermanentLocksPoolV1 {
         SafeERC20.safeTransfer(token, swapper_contract_address, balance);
       }
     }
+
+    emit SwapperFilled(_tokens);
   }
 
   // ============================================================================
@@ -554,7 +571,7 @@ contract PermanentLocksPoolV1 {
     // Update snapshot ID to current epoch
     last_snapshot_id = current_epoch;
 
-    emit RewardsSnapshot(reward_amount, last_snapshot_id);
+    emit RewardsSnapshot(reward_amount, last_snapshot_id, acc_reward_scaled);
   }
 
   /// @notice Internal emergency snapshot mechanism to prevent reward calculation issues
@@ -582,7 +599,7 @@ contract PermanentLocksPoolV1 {
       }
 
       last_snapshot_id = current_epoch;
-      emit RewardsSnapshot(0, last_snapshot_id);
+      emit RewardsSnapshot(0, last_snapshot_id, acc_reward_scaled);
       emit EmergencySnapshot(last_snapshot_id);
       return true;
     } else {
@@ -718,7 +735,7 @@ contract PermanentLocksPoolV1 {
   /// @param _limit Maximum number of locks to return
   /// @return Array of LockInfo structs containing user's lock details
   function getUserLocks(address _user, uint256 _offset, uint256 _limit) external view returns (LockInfo[] memory) {
-    uint256 total_locks = userLockCount[_user];
+    uint256 total_locks = user_locks_count[_user];
     
     if (_offset >= total_locks) {
       return new LockInfo[](0);
@@ -733,27 +750,29 @@ contract PermanentLocksPoolV1 {
     LockInfo[] memory result = new LockInfo[](length);
     
     for (uint256 i = 0; i < length; i++) {
-      result[i] = userLocks[_user][_offset + i];
+      result[i] = user_locks[_user][_offset + i];
     }
     
     return result;
   }
   
-  /// @notice Retrieves specific lock information by lock ID
+  /// @notice Retrieves specific lock information by lock ID and owner
+  /// @param _owner Address of the lock owner
   /// @param _lock_id Lock ID to retrieve information for
   /// @return LockInfo struct containing the specific lock details
-  function getUserLock(uint256 _lock_id) external view returns (LockInfo memory) {
-    uint256 lock_index = _getLockIndexOrFail(_lock_id);
-    return userLocks[msg.sender][lock_index];
+  function getUserLock(address _owner, uint256 _lock_id) external view returns (LockInfo memory) {
+    uint256 lock_index = _getLockIndexOrFail(_owner, _lock_id);
+    return user_locks[_owner][lock_index];
   }
 
   /// @notice Calculates pending rewards for a specific lock
   /// @dev This is useful for frontend display and user decision making
+  /// @param _owner Address of the lock owner
   /// @param _lock_id Lock ID to calculate pending rewards for
   /// @return pending_rewards Amount of pending rewards for this lock
-  function getPendingRewards(uint256 _lock_id) external view returns (uint256 pending_rewards) {
-    uint256 lock_index = _getLockIndexOrFail(_lock_id);
-    LockInfo storage lock_info = userLocks[msg.sender][lock_index];
+  function getPendingRewards(address _owner, uint256 _lock_id) external view returns (uint256 pending_rewards) {
+    uint256 lock_index = _getLockIndexOrFail(_owner, _lock_id);
+    LockInfo storage lock_info = user_locks[_owner][lock_index];
     
     // Return 0 if lock hasn't reached its start snapshot yet
     if (last_snapshot_id <= lock_info.start_snapshot_id) {
@@ -804,22 +823,23 @@ contract PermanentLocksPoolV1 {
   // INTERNAL FUNCTIONS
   // ============================================================================
 
-  /// @notice Internal function to get lock index and validate caller owns it
+  /// @notice Internal function to get lock index and validate owner
+  /// @param _owner Address of the lock owner
   /// @param _lock_id Lock ID to get index for
-  /// @return lock_index Index of the lock in caller's array
-  function _getLockIndexOrFail(uint256 _lock_id) internal view returns (uint256 lock_index) {
+  /// @return lock_index Index of the lock in owner's array
+  function _getLockIndexOrFail(address _owner, uint256 _lock_id) internal view returns (uint256 lock_index) {
     lock_index = lock_id_to_user_index[_lock_id];
     require(
-      lock_index < userLockCount[msg.sender] && userLocks[msg.sender][lock_index].lock_id == _lock_id,
-      "Lock not found or not owned by caller"
+      lock_index < user_locks_count[_owner] && user_locks[_owner][lock_index].lock_id == _lock_id,
+      "Lock not found or not owned by specified owner"
     );
   }
 
   /// @notice Internal function to claim rewards for a specific lock
   /// @param _lock_id Lock ID to claim rewards from
   function _claim(uint256 _lock_id) internal {
-    uint256 lock_index = _getLockIndexOrFail(_lock_id);
-    LockInfo storage lock_info = userLocks[msg.sender][lock_index];
+    uint256 lock_index = _getLockIndexOrFail(msg.sender, _lock_id);
+    LockInfo storage lock_info = user_locks[msg.sender][lock_index];
     
     if(last_snapshot_id <= lock_info.start_snapshot_id) {
       return; // Skip locks that are not eligible for rewards yet
@@ -974,8 +994,8 @@ contract PermanentLocksPoolV1 {
     require(_window_preepoch_duration >= 1.5 hours, "Pre-epoch window must be at least 90 minutes");
     require(_window_postepoch_duration >= 0.5 hours, "Post-epoch window must be at least 30 minutes");
     require(
-      _window_preepoch_duration + _window_postepoch_duration < 1 weeks,
-      "Combined window durations must be less than 1 week"
+      _window_preepoch_duration + _window_postepoch_duration < 6 days,
+      "Combined window durations must be less than 6 days"
     );
 
     window_preepoch_duration = _window_preepoch_duration;
