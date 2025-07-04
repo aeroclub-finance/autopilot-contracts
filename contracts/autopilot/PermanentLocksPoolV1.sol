@@ -19,7 +19,7 @@ contract PermanentLocksPoolV1 {
   IveNFT public immutable nft_locks_contract;
   
   /// @notice The voter contract for managing votes and claiming rewards
-	IVoter public immutable voter_contract;
+  IVoter public immutable voter_contract;
   
   /// @notice The token used for reward distribution (typically USDC)
   IERC20 public immutable rewards_token;
@@ -662,9 +662,10 @@ contract PermanentLocksPoolV1 {
   /// @notice Updates the special window durations
   /// @dev Only owner can call this function
   /// @dev Requirements:
-  ///      - Pre-epoch duration must be at least 2 hours
-  ///      - Post-epoch duration must be at least 1 hour
-  ///      - Combined durations must be less than 1 week to prevent overlapping windows
+  ///      - Deposits must be paused
+  ///      - Pre-epoch duration must be at least 90 minutes
+  ///      - Post-epoch duration must be at least 30 minutes
+  ///      - Combined durations must be less than 6 days to prevent overlapping windows
   /// @param _window_preepoch_duration New duration for pre-epoch window (in seconds)
   /// @param _window_postepoch_duration New duration for post-epoch window (in seconds)
   function setWindowDurations(
