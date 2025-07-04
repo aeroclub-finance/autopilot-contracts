@@ -516,6 +516,8 @@ contract PermanentLocksPoolV1 {
 
 		_isInSpecialWindowOrFail(last_snapshot_id);
 
+    require(swapper_contract_address != address(0), "Swapper contract not set");
+
     for (uint256 i = 0; i < _tokens.length; i++) {
 
       IERC20 token = IERC20(_tokens[i]);
