@@ -162,6 +162,11 @@ contract PermanentLocksPoolV1 {
 
   event EmergencySnapshot(uint256 snapshot_id);
 
+  /// @notice Emitted when ownership is transferred
+  /// @param previous_owner Address of the previous owner
+  /// @param new_owner Address of the new owner
+  event OwnershipTransferred(address indexed previous_owner, address indexed new_owner);
+
   /// @notice Emitted when deposits are paused or resumed
   /// @param paused Whether deposits are now paused
   event DepositsPausedUpdated(bool paused);
@@ -656,7 +661,9 @@ contract PermanentLocksPoolV1 {
   /// @param _new_owner Address of the new owner
   function transferOwnership(address _new_owner) external onlyOwner {
     require(_new_owner != address(0), "New owner address cannot be zero");
+    address old_owner = owner;
     owner = _new_owner;
+    emit OwnershipTransferred(old_owner, _new_owner);
   }
 
   /// @notice Updates the special window durations
