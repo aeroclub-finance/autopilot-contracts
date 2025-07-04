@@ -86,10 +86,16 @@ contract PermanentLocksPoolV1 {
     /// @notice First snapshot ID that this lock is eligible for
     /// @dev This lock can only claim rewards from snapshots >= this ID
     uint256 start_snapshot_id;
+
+
+    uint256 voting_power;
   }
   
   /// @notice Mapping from user address to array of their lock deposits
   mapping(address => LockInfo[]) public user_locks;
+
+  /// @notice Mapping from lock ID to it's owner 
+  mapping(uint256 => address) public lock_owner;
   
   /// @notice Mapping to track total number of locks per user
   mapping(address => uint256) public user_locks_count;
@@ -300,9 +306,11 @@ contract PermanentLocksPoolV1 {
     LockInfo memory new_lock = LockInfo({
       lock_id: _lock_id,
       reward_scaled_start: acc_reward_scaled,
-      start_snapshot_id: eligible_epoch
+      start_snapshot_id: eligible_epoch,
+      voting_power: amount
     });
 
+    lock_owner[_lock_id] = msg.sender;
     user_locks[msg.sender].push(new_lock);
     lock_id_to_user_index[_lock_id] = user_locks_count[msg.sender];
     user_locks_count[msg.sender]++;
@@ -326,9 +334,9 @@ contract PermanentLocksPoolV1 {
     
     uint256 lock_index = _getLockIndexOrFail(msg.sender, _lock_id);
     
-    uint256 amount = nft_locks_contract.balanceOfNFT(_lock_id);
-
     LockInfo storage lock_info = user_locks[msg.sender][lock_index];
+    
+    uint256 amount = lock_info.voting_power;
     if(lock_info.start_snapshot_id > last_snapshot_id) {
       total_tracked_weight[lock_info.start_snapshot_id] -= amount;
     } else {
@@ -345,7 +353,8 @@ contract PermanentLocksPoolV1 {
     user_locks[msg.sender].pop();
     user_locks_count[msg.sender]--;
     
-    // Clear mapping for withdrawn lock
+    // Clear mappings for withdrawn lock
+    delete lock_owner[_lock_id];
     delete lock_id_to_user_index[_lock_id];
 
     nft_locks_contract.transferFrom(address(this), msg.sender, _lock_id);
@@ -448,7 +457,9 @@ contract PermanentLocksPoolV1 {
   /// @dev Only permitted operators can call this outside special window
   ///      This claims rebase rewards that are automatically added to each NFT
   /// @param _nft_ids Array of NFT IDs to claim rebase rewards for
-  function claimRebaseRewards(uint256[] calldata _nft_ids) external onlyPermittedOperator {
+  function claimRebaseRewards(
+    uint256[] calldata _nft_ids
+  ) external onlyPermittedOperator {
 
     _emergencySnapshot();
 
@@ -458,35 +469,41 @@ contract PermanentLocksPoolV1 {
     
     uint256 total_before_balance = 0;
     uint256 total_after_balance = 0;
-    
-    // Calculate total balance before claiming
-    for (uint256 i = 0; i < _nft_ids.length; i++) {
-      uint256 nft_id = _nft_ids[i];
-      require(nft_locks_contract.ownerOf(nft_id) == address(this), "Contract doesn't own NFT");
-      total_before_balance += nft_locks_contract.balanceOfNFT(nft_id);
-    }
 
     // Claim rebase rewards for each NFT
+    uint256[] memory final_balances = new uint256[](_nft_ids.length);
     for (uint256 i = 0; i < _nft_ids.length; i++) {
-      rewards_distributor.claim(_nft_ids[i]);
-    }
-    
-    // Calculate total balance after claiming
-    for (uint256 i = 0; i < _nft_ids.length; i++) {
-      total_after_balance += nft_locks_contract.balanceOfNFT(_nft_ids[i]);
+
+      uint256 nft_id = _nft_ids[i];
+      address nft_owner = lock_owner[nft_id];
+      uint256 nft_index = lock_id_to_user_index[nft_id];
+
+      LockInfo storage lock_info = user_locks[nft_owner][nft_index];
+
+      require(nft_owner != address(0), "NFT not in vault");
+
+      total_before_balance += lock_info.voting_power;
+
+      rewards_distributor.claim(nft_id);
+
+      // now we have updated balance for this NFT
+      
+      uint256 new_lock_balance = nft_locks_contract.balanceOfNFT(nft_id);
+      total_after_balance += new_lock_balance;
+      
+      lock_info.voting_power = new_lock_balance;
+      final_balances[i] = new_lock_balance;
     }
 
     // Apply rebase change (can be positive or negative)
     if (total_before_balance > 0 && total_after_balance != total_before_balance) {
       int256 rebase_change = int256(total_after_balance) - int256(total_before_balance);
       int256 new_weight = int256(total_tracked_weight[last_snapshot_id]) + rebase_change;
-      total_tracked_weight[last_snapshot_id] = new_weight > 0 ? uint256(new_weight) : 0;
-    }
 
-    // Get final balances for each NFT
-    uint256[] memory final_balances = new uint256[](_nft_ids.length);
-    for (uint256 i = 0; i < _nft_ids.length; i++) {
-      final_balances[i] = nft_locks_contract.balanceOfNFT(_nft_ids[i]);
+      // we need to care only about last_snapshot_id because we 
+      // cannot have total_tracked_weight[last_snapshot_id + 1]
+      // outside of special window
+      total_tracked_weight[last_snapshot_id] = new_weight > 0 ? uint256(new_weight) : 0;
     }
 
     emit RebaseRewardsClaimed(_nft_ids, final_balances);
@@ -779,7 +796,7 @@ contract PermanentLocksPoolV1 {
         return 0;
     }
     
-    uint256 lock_weight = nft_locks_contract.balanceOfNFT(lock_info.lock_id);
+    uint256 lock_weight = lock_info.voting_power;
     uint256 delta_acc = acc_reward_scaled - lock_info.reward_scaled_start;
     pending_rewards = (lock_weight * delta_acc) / SCALE;
   }
@@ -845,7 +862,7 @@ contract PermanentLocksPoolV1 {
       return; // Skip locks that are not eligible for rewards yet
     }
     
-    uint256 lock_weight = nft_locks_contract.balanceOfNFT(lock_info.lock_id);
+    uint256 lock_weight = lock_info.voting_power;
     if(lock_weight == 0) {
       return; // Skip locks with zero voting power
     }
