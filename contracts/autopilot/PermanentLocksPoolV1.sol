@@ -258,7 +258,12 @@ contract PermanentLocksPoolV1 {
   /// @dev Lock must not have voted in current epoch and user must own the NFT
   /// @param _lock_id Token ID of the permanent veNFT to deposit
   function deposit(uint256 _lock_id) external {
+
     require(!deposits_paused, "Deposits are paused");
+    require(
+      nft_locks_contract.escrowType(_lock_id) == IveNFT.EscrowType.NORMAL,
+      "Lock must be normal"
+    );
 
     _emergencySnapshot();
 
