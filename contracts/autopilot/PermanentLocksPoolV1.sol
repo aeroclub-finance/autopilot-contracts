@@ -96,9 +96,6 @@ contract PermanentLocksPoolV1 {
 
   /// @notice Mapping from lock ID to it's owner 
   mapping(uint256 => address) public lock_owner;
-  
-  /// @notice Mapping to track total number of locks per user
-  mapping(address => uint256) public user_locks_count;
 
   // ============================================================================
   // EVENTS
@@ -270,8 +267,6 @@ contract PermanentLocksPoolV1 {
       _getEpochIdByTimestamp(last_voted) != current_epoch_id, 
       "Already voted in current epoch"
     );
-    
-    uint256 current_lock_count = user_locks_count[msg.sender];
 
     require(
       nft_locks_contract.ownerOf(_lock_id) == msg.sender,
@@ -312,10 +307,11 @@ contract PermanentLocksPoolV1 {
 
     lock_owner[_lock_id] = msg.sender;
     user_locks[msg.sender].push(new_lock);
-    lock_id_to_user_index[_lock_id] = user_locks_count[msg.sender];
-    user_locks_count[msg.sender]++;
 
-    emit Deposit(msg.sender, _lock_id, current_lock_count, amount, eligible_epoch, acc_reward_scaled);
+    uint256 new_lock_index = user_locks[msg.sender].length - 1;
+    lock_id_to_user_index[_lock_id] = new_lock_index;
+
+    emit Deposit(msg.sender, _lock_id, new_lock_index, amount, eligible_epoch, acc_reward_scaled);
   }
 
   /// @notice Withdraws a specific lock by lock ID
@@ -326,8 +322,6 @@ contract PermanentLocksPoolV1 {
     _emergencySnapshot();
 
 		_isNotInSpecialWindowOrFail(last_snapshot_id);
-
-    require(user_locks_count[msg.sender] > 0, "No locks found");
     
     // Claim rewards before withdrawing
     _claim(_lock_id);
@@ -343,7 +337,7 @@ contract PermanentLocksPoolV1 {
       total_tracked_weight[last_snapshot_id] -= amount;
     }
     
-    uint256 last_index = user_locks_count[msg.sender] - 1;
+    uint256 last_index = user_locks[msg.sender].length - 1;
     if (lock_index != last_index) {
       user_locks[msg.sender][lock_index] = user_locks[msg.sender][last_index];
       // Update mapping for the moved lock
@@ -351,7 +345,6 @@ contract PermanentLocksPoolV1 {
       lock_id_to_user_index[moved_lock_id] = lock_index;
     }
     user_locks[msg.sender].pop();
-    user_locks_count[msg.sender]--;
     
     // Clear mappings for withdrawn lock
     delete lock_owner[_lock_id];
@@ -367,7 +360,6 @@ contract PermanentLocksPoolV1 {
   /// @param _lock_id Lock ID to claim rewards from
   function claim(uint256 _lock_id) external {
     _emergencySnapshot();
-    require(user_locks_count[msg.sender] > 0, "No locks found");
     _claim(_lock_id);
   }
 
@@ -752,7 +744,7 @@ contract PermanentLocksPoolV1 {
   /// @param _limit Maximum number of locks to return
   /// @return Array of LockInfo structs containing user's lock details
   function getUserLocks(address _user, uint256 _offset, uint256 _limit) external view returns (LockInfo[] memory) {
-    uint256 total_locks = user_locks_count[_user];
+    uint256 total_locks = user_locks[_user].length;
     
     if (_offset >= total_locks) {
       return new LockInfo[](0);
@@ -847,7 +839,7 @@ contract PermanentLocksPoolV1 {
   function _getLockIndexOrFail(address _owner, uint256 _lock_id) internal view returns (uint256 lock_index) {
     lock_index = lock_id_to_user_index[_lock_id];
     require(
-      lock_index < user_locks_count[_owner] && user_locks[_owner][lock_index].lock_id == _lock_id,
+      lock_index < user_locks[_owner].length && user_locks[_owner][lock_index].lock_id == _lock_id,
       "Lock not found or not owned by specified owner"
     );
   }
