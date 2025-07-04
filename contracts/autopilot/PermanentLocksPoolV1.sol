@@ -233,15 +233,27 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
     uint256 _window_preepoch_duration,
     uint256 _window_postepoch_duration
   ) {
+
+    require(
+      address(_nft_locks_contract) != address(0) &&
+      address(_voter_contract) != address(0) &&
+      address(_rewards_token) != address(0) &&
+      address(_rewards_distributor) != address(0), 
+      "Zero address"
+    );
+
+    require(_epochs_offset_timestamp > 0, "Invalid epochs offset timestamp");
+
     nft_locks_contract = _nft_locks_contract;
     voter_contract = _voter_contract;
     epochs_offset_timestamp = _epochs_offset_timestamp;
     rewards_token = _rewards_token;
     rewards_distributor = _rewards_distributor;
-    deposit_validator = _deposit_validator;
-    owner = msg.sender;
 
-    // V1 doesn't use managed NFTs - just stores individual NFTs
+    // Can be zero if no deposit validation is required
+    deposit_validator = _deposit_validator;
+    
+    owner = msg.sender;
 
     _setWindowDurations(_window_preepoch_duration, _window_postepoch_duration);
     // _setWindowDurations requires deposits_paused to be true so we reset it here
