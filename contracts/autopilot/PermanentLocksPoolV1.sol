@@ -7,13 +7,14 @@ import "../aerodrome/IRewardsDistributor.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./RewardsVault.sol";
-import "./DepositValidatorV1.sol";
+import "./IDepositValidator.sol";
+import "./IPermanentLocksPoolV1.sol";
 
 /// @title Aeroclub Permanent Locks Vault V1 (Batched Individual Voting)
 /// @notice A vault contract that stores individual NFTs and votes with them in batches
 /// @dev This version votes with individual NFTs in batches to optimize gas while avoiding delegation requirements
 /// @author Aeroclub Team
-contract PermanentLocksPoolV1 {
+contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
 
   /// @notice The veNFT contract for managing locked positions
   IveNFT public immutable nft_locks_contract;
@@ -50,7 +51,7 @@ contract PermanentLocksPoolV1 {
   RewardsVault public rewards_vault;
 
   /// @notice The deposit validator contract for validating deposits
-  DepositValidatorV1 public deposit_validator;
+  IDepositValidator public deposit_validator;
 
   /// @notice Scaling factor for reward calculations to maintain precision
   uint256 public constant SCALE = 1e18;
@@ -228,7 +229,7 @@ contract PermanentLocksPoolV1 {
     uint256 _epochs_offset_timestamp,
     IERC20 _rewards_token,
     IRewardsDistributor _rewards_distributor,
-    DepositValidatorV1 _deposit_validator,
+    IDepositValidator _deposit_validator,
     uint256 _window_preepoch_duration,
     uint256 _window_postepoch_duration
   ) {
@@ -743,7 +744,7 @@ contract PermanentLocksPoolV1 {
   /// @notice Sets the deposit validator contract address
   /// @dev Only owner can call this function
   /// @param _deposit_validator Address of the new deposit validator contract (can be zero to disable)
-  function setDepositValidator(DepositValidatorV1 _deposit_validator) external onlyOwner {
+  function setDepositValidator(IDepositValidator _deposit_validator) external onlyOwner {
     address old_validator = address(deposit_validator);
     deposit_validator = _deposit_validator;
     emit DepositValidatorUpdated(old_validator, address(_deposit_validator));

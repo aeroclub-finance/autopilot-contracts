@@ -2,12 +2,13 @@
 pragma solidity ^0.8.0;
 
 import "../aerodrome/IveNFT.sol";
+import "./IDepositValidator.sol";
 
 /// @title Deposit Validator Contract V1
 /// @notice Validates deposits for PermanentLocksPool contracts
 /// @dev This contract can be updated/replaced by the pool contract owner
 /// @author Aeroclub Team
-contract DepositValidatorV1 {
+contract DepositValidatorV1 is IDepositValidator {
 
 	/// @notice Minimum voting power required for deposit
 	uint256 public minimum_lock_amount;
@@ -81,4 +82,3 @@ contract DepositValidatorV1 {
 		require(_new_owner != address(0), "Cannot transfer to zero address");
 		owner = _new_owner;
 	}
-}
