@@ -82,3 +82,4 @@ contract DepositValidatorV1 is IDepositValidator {
 		require(_new_owner != address(0), "Cannot transfer to zero address");
 		owner = _new_owner;
 	}
+}
