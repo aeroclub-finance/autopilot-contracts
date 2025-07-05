@@ -766,6 +766,13 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
   // VIEW FUNCTIONS
   // ============================================================================
 
+  /// @notice Gets the total number of locks for a user
+  /// @param _user Address of the user
+  /// @return Total number of locks deposited by the user
+  function getUserLocksCount(address _user) external view returns (uint256) {
+    return user_locks[_user].length;
+  }
+
   /// @notice Retrieves lock information for a user with pagination
   /// @param _user Address of the user
   /// @param _offset Starting index for pagination
