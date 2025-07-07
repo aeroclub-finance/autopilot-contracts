@@ -834,7 +834,7 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
   function getTvl() external view returns (
     uint256 total_tracked_weight_
   ) {
-    total_tracked_weight_ = total_tracked_weight[last_snapshot_id];
+    total_tracked_weight_ = total_tracked_weight[last_snapshot_id] + total_tracked_weight[last_snapshot_id + 1];
   }
 
   /// @notice Gets the current epoch ID
