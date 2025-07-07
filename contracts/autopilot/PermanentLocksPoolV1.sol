@@ -355,9 +355,9 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
     
     uint256 amount = lock_info.voting_power;
     if(lock_info.start_snapshot_id > last_snapshot_id) {
-      total_tracked_weight[lock_info.start_snapshot_id] -= amount;
+      total_tracked_weight[lock_info.start_snapshot_id] -= _min(total_tracked_weight[lock_info.start_snapshot_id], amount);
     } else {
-      total_tracked_weight[last_snapshot_id] -= amount;
+      total_tracked_weight[last_snapshot_id] -= _min(total_tracked_weight[last_snapshot_id], amount);
     }
     
     uint256 last_index = user_locks[msg.sender].length - 1;
@@ -831,7 +831,7 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
 
   /// @notice Gets total tracked weight information for current epoch
   /// @return total_tracked_weight_ Total tracked weight from users who deposited through this contract
-  function getPoolInfo() external view returns (
+  function getTvl() external view returns (
     uint256 total_tracked_weight_
   ) {
     total_tracked_weight_ = total_tracked_weight[last_snapshot_id];
@@ -1044,6 +1044,14 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
 
     window_preepoch_duration = _window_preepoch_duration;
     window_postepoch_duration = _window_postepoch_duration;
+  }
+
+  /// @notice Returns the minimum of two numbers
+  /// @param a First number
+  /// @param b Second number
+  /// @return The smaller of the two numbers
+  function _min(uint256 a, uint256 b) internal pure returns (uint256) {
+    return a < b ? a : b;
   }
 	
 }
