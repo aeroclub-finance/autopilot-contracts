@@ -10,6 +10,10 @@ import "./RewardsVault.sol";
 import "./IDepositValidator.sol";
 import "./IPermanentLocksPoolV1.sol";
 
+interface IERC20Metadata {
+  function decimals() external view returns (uint8);
+}
+
 /// @title Aeroclub Permanent Locks Vault V1 (Batched Individual Voting)
 /// @notice A vault contract that stores individual NFTs and votes with them in batches
 /// @dev This version votes with individual NFTs in batches to optimize gas while avoiding delegation requirements
@@ -32,6 +36,8 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
   /// @dev This aligns our epochs with the underlying protocol's epoch system
   uint256 public immutable epochs_offset_timestamp;
 
+  uint8 public immutable reward_token_decimals;
+
   uint256 public window_preepoch_duration;
 
   uint256 public window_postepoch_duration;
@@ -53,10 +59,12 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
   /// @notice The deposit validator contract for validating deposits
   IDepositValidator public deposit_validator;
 
-  /// @notice Scaling factor for reward calculations to maintain precision
-  uint256 public constant SCALE = 1e18;
+  /// @notice Scaling factor for reward calculations
+  uint8 public constant DECIMALS = 18;
 
-  
+  /// @notice Scaling factor for reward calculations to maintain precision (based on veAERO decimals)
+  uint256 public constant SCALE = 10 ** DECIMALS;
+
   /// @notice Total tracked voting power from users who deposited through this contract per epoch
   /// @dev Used for proportional reward calculations, indexed by snapshot_id
   mapping(uint256 => uint256) public total_tracked_weight;
@@ -90,6 +98,9 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
 
 
     uint256 voting_power;
+
+
+    uint256 postponed_rewards;
   }
   
   /// @notice Mapping from user address to array of their lock deposits
@@ -119,8 +130,9 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
   
   /// @notice Emitted when a user claims their accumulated rewards
   /// @param user Address of the user claiming rewards
+  /// @param lock_id Token ID of the lock for which rewards are claimed
   /// @param reward_amount Amount of rewards claimed
-  event Claim(address indexed user, uint256 reward_amount);
+  event Claim(address indexed user, uint256 indexed lock_id, uint256 reward_amount);
   
   /// @notice Emitted when a new reward snapshot is taken
   /// @param reward_amount Amount of rewards distributed in this snapshot
@@ -142,12 +154,6 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
   /// @param operator Address of the operator
   /// @param permitted Whether the operator is now permitted
   event OperatorPermissionUpdated(address indexed operator, bool permitted);
-
-  /// @notice Emitted when master NFT is created or updated
-  /// @param old_nft_id Previous master NFT ID (0 if first time)
-  /// @param new_nft_id New master NFT ID
-  /// @param total_amount Total voting power in the new master NFT
-  event MasterNftUpdated(uint256 indexed old_nft_id, uint256 indexed new_nft_id, uint256 total_amount);
 
   /// @notice Emitted when window durations are updated
   /// @param old_preepoch_duration Previous pre-epoch window duration
@@ -174,7 +180,8 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
 
   /// @notice Emitted when voting is completed
   /// @param nft_ids Array of NFT IDs that voted
-  event VotingCompleted(uint256[] nft_ids);
+  /// @param pools Array of pool addresses that were voted for
+  event VotingCompleted(uint256[] nft_ids, address[] pools);
 
   /// @notice Emitted when voting rewards are claimed
   /// @param nft_ids Array of NFT IDs that claimed rewards
@@ -261,6 +268,12 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
     
     // Deploy rewards vault with this contract as the authorized caller
     rewards_vault = new RewardsVault();
+
+    // needed so we dont get _emergencySnapshot() call on first deposit
+    last_snapshot_id = _getCurrentEpochId();
+
+    reward_token_decimals = IERC20Metadata(address(_rewards_token)).decimals();
+    require(reward_token_decimals <= DECIMALS, "Rewards token decimals cannot exceed internal decimals");
   }
 
   // ============================================================================
@@ -296,6 +309,14 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
       "Not owner of NFT"
     );
 
+    if(nft_locks_contract.voted(_lock_id)) {
+      voter_contract.reset(_lock_id);
+    }
+
+    if(!lock.isPermanent) {
+      nft_locks_contract.lockPermanent(_lock_id);
+    }
+
     // Validate deposit using deposit validator contract
     if (address(deposit_validator) != address(0)) {
       deposit_validator.validateDepositOrFail(
@@ -303,14 +324,6 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
         _lock_id,
         msg.sender
       );
-    }
-
-    if(nft_locks_contract.voted(_lock_id)) {
-      voter_contract.reset(_lock_id);
-    }
-
-    if(!lock.isPermanent) {
-      nft_locks_contract.lockPermanent(_lock_id);
     }
 
     uint256 amount = nft_locks_contract.balanceOfNFT(_lock_id);
@@ -325,7 +338,8 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
       lock_id: _lock_id,
       reward_scaled_start: acc_reward_scaled,
       start_snapshot_id: eligible_epoch,
-      voting_power: amount
+      voting_power: amount,
+      postponed_rewards: 0
     });
 
     lock_owner[_lock_id] = msg.sender;
@@ -416,6 +430,8 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
     uint256 _for_epoch_id
   ) external onlyPermittedOperator {
 
+    _emergencySnapshot();
+
 		_isInSpecialWindowOrFail(last_snapshot_id);
 
     uint256 current_epoch_id = _getCurrentEpochId();
@@ -425,16 +441,10 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
     
     for (uint256 i = 0; i < _nft_ids.length; i++) {
       uint256 nft_id = _nft_ids[i];
-      require(nft_locks_contract.ownerOf(nft_id) == address(this), "Contract doesn't own NFT");
-      
-      if (nft_locks_contract.voted(nft_id)) {
-        voter_contract.reset(nft_id);
-      }
-      
       voter_contract.vote(nft_id, _pools, _percentages);
     }
 
-    emit VotingCompleted(_nft_ids);
+    emit VotingCompleted(_nft_ids, _pools);
   }
 
   /// @notice Claims voting rewards (bribes) from gauges for multiple NFTs
@@ -494,6 +504,10 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
       uint256 nft_index = lock_id_to_user_index[nft_id];
 
       LockInfo storage lock_info = user_locks[nft_owner][nft_index];
+
+      uint256 new_pending_rewards = _calcNewPendingRewards(lock_info);
+      lock_info.postponed_rewards += new_pending_rewards;
+      lock_info.reward_scaled_start = acc_reward_scaled;
 
       require(nft_owner != address(0), "NFT not in vault");
 
@@ -563,6 +577,8 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
   ///        Can be 0 if no rewards were generated this epoch
   function snapshotRewards(uint256 reward_amount) external onlySwapper {
 
+    _isInSpecialWindowOrFail(last_snapshot_id);
+
     uint256 current_epoch = _getCurrentEpochId();
 
     require(
@@ -587,8 +603,13 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
       rewards_vault.deposit(rewards_token, reward_amount);
 
       if(total_tracked_weight[last_snapshot_id] > 0) {
-        // Calculate coefficient: reward_scaled = reward_amount / total_tracked_weight
-        uint256 reward_scaled = (reward_amount * SCALE) / total_tracked_weight[last_snapshot_id];
+        // Scale reward_amount to internal DECIMALS (18) - we only scale up since constructor ensures reward_token_decimals <= DECIMALS
+        uint256 scaled_reward_amount = reward_amount * (10**(DECIMALS - reward_token_decimals));
+
+        // Calculate coefficient: reward_scaled = scaled_reward_amount / total_tracked_weight
+        // We know about small inefficiency in this formula, but it is negligible
+        // and actual losses are less then 1$ in over million years
+        uint256 reward_scaled = (scaled_reward_amount * SCALE) / total_tracked_weight[last_snapshot_id];
 
         // Increase accumulator
         acc_reward_scaled += reward_scaled;
@@ -722,6 +743,7 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
     IERC20 _token,
     address _recipient
   ) external onlyOwner returns (uint256 withdrawn_amount) {
+    _emergencySnapshot();
     _isNotInSpecialWindowOrFail(last_snapshot_id);
     require(_recipient != address(0), "Recipient cannot be zero address");
     
@@ -738,6 +760,7 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
     address _recipient,
     uint256 _amount
   ) external onlyOwner {
+    _emergencySnapshot();
     _isNotInSpecialWindowOrFail(last_snapshot_id);
     require(_recipient != address(0), "Recipient cannot be zero address");
     require(_amount > 0, "Amount must be greater than zero");
@@ -820,12 +843,10 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
     
     // Return 0 if lock hasn't reached its start snapshot yet
     if (last_snapshot_id <= lock_info.start_snapshot_id) {
-        return 0;
+      return 0;
     }
     
-    uint256 lock_weight = lock_info.voting_power;
-    uint256 delta_acc = acc_reward_scaled - lock_info.reward_scaled_start;
-    pending_rewards = (lock_weight * delta_acc) / SCALE;
+    pending_rewards = _calcPendingRewards(lock_info) / (10**(DECIMALS - reward_token_decimals));
   }
 
 
@@ -882,8 +903,11 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
   /// @notice Internal function to claim rewards for a specific lock
   /// @param _lock_id Lock ID to claim rewards from
   function _claim(uint256 _lock_id) internal {
-    uint256 lock_index = _getLockIndexOrFail(msg.sender, _lock_id);
-    LockInfo storage lock_info = user_locks[msg.sender][lock_index];
+
+    address recipient = lock_owner[_lock_id];
+
+    uint256 lock_index = _getLockIndexOrFail(recipient, _lock_id);
+    LockInfo storage lock_info = user_locks[recipient][lock_index];
     
     if(last_snapshot_id <= lock_info.start_snapshot_id) {
       return; // Skip locks that are not eligible for rewards yet
@@ -895,18 +919,37 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
     }
     
     // Calculate rewards for this lock based on its proportional weight
-    uint256 delta_acc = acc_reward_scaled - lock_info.reward_scaled_start;
-    if (delta_acc > 0) {
-      uint256 lock_payout = (lock_weight * delta_acc) / SCALE;
-      
+    uint256 pending_rewards = _calcPendingRewards(lock_info);
+
+    if(pending_rewards > 0) {
+
       // Update this lock's reward baseline
       lock_info.reward_scaled_start = acc_reward_scaled;
-      
-      if(lock_payout > 0) {
-        rewards_vault.withdraw(rewards_token, msg.sender, lock_payout);
-        emit Claim(msg.sender, lock_payout);
-      }
+      lock_info.postponed_rewards = 0; // Reset postponed rewards after claiming
+
+      // Scale down pending_rewards from internal DECIMALS (18) to reward token decimals
+      uint256 scaled_down_rewards = pending_rewards / (10**(DECIMALS - reward_token_decimals));
+
+      rewards_vault.withdraw(rewards_token, recipient, scaled_down_rewards);
+      emit Claim(recipient, _lock_id, scaled_down_rewards);
     }
+  }
+
+  function _calcNewPendingRewards(
+    LockInfo storage _lock_info
+  ) internal view returns (uint256 new_pending_rewards) {
+    uint256 delta_acc = acc_reward_scaled - _lock_info.reward_scaled_start;
+    if (delta_acc > 0) {
+      new_pending_rewards = (_lock_info.voting_power * delta_acc) / SCALE;
+    } else {
+      new_pending_rewards = 0;
+    }
+  }
+
+  function _calcPendingRewards(
+    LockInfo storage _lock_info
+  ) internal view returns (uint256 pending_rewards) {
+    return _calcNewPendingRewards(_lock_info) + _lock_info.postponed_rewards;
   }
 
   /// @notice Requires that current time is within special window
