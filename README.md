@@ -1,125 +1,201 @@
-## Expected production deployment params:
+# Autopilot Protocol Security & How It Works
 
+## What Is Autopilot?
+
+Autopilot is a non-custodial veAERO optimization protocol that automates your voting strategy while keeping your NFTs completely secure. You maintain full ownership of your locks while our automated system handles the complex task of optimizing voting rewards.
+
+## 🔒 Your Security: How Your Locks Are Protected
+
+### What Makes Your NFTs Safe
+
+**Autopilot CANNOT:**
+- Transfer your NFTs to other wallets or addresses
+- Modify your lock duration or amount  
+- Prevent you from withdrawing your NFTs
+- Access or steal other users' NFTs
+- Change the core security rules of the protocol
+
+**Autopilot CAN ONLY:**
+- Vote using your NFT's voting power for optimal pools
+- Collect voting rewards (bribes and fees) earned from your votes
+- Collect automatic AERO distributions from the protocol
+- Reset previous votes to vote again in new epochs
+
+### Non-Custodial Design
+
+You remain the true owner of your NFTs:
+- **Individual tracking**: Your NFTs are tracked separately from all other users
+- **Withdrawal rights**: You can reclaim your NFTs anytime (outside bot operation windows)
+- **Proportional rewards**: You receive rewards based exactly on your voting power contribution
+
+## 🗳️ How Our Voting Strategy Works
+
+### Advanced Optimization Formula
+
+Our algorithm doesn't randomly vote. It analyzes multiple factors to maximize your returns:
+
+- **Pool Performance History**: We track which pools consistently deliver good rewards
+- **Current Incentives**: How much each pool is paying in bribes for votes
+- **Trading Volume & TVL**: Larger, more active pools tend to be more stable
+- **Gas Efficiency**: We optimize for the best net returns after transaction costs
+- **Risk Assessment**: Balancing high rewards with pool reliability
+
+The system calculates the expected return-on-investment for each possible voting allocation and selects the combination that maximizes your rewards.
+
+### How Voting Gets Executed
+
+**Batch Processing Strategy:**
+- Our bots vote with multiple NFTs simultaneously to save on gas costs
+- Each batch is optimized to fit within blockchain transaction limits
+- If individual NFTs fail, others in the batch still succeed
+- Multiple backup systems ensure votes go through even during network congestion
+
+## ⏰ The Special Window System
+
+### When Bot Operations Happen
+
+The protocol operates on a precise schedule to ensure fair reward distribution:
+
+**Special Window Timing**: 
+- Starts ~90 minutes before each weekly epoch ends
+- Continues for ~30 minutes after the new epoch begins
+- Total duration: ~2 hours per week
+- Special Window Postepoch duration in practice will be less than an hour or even 30 mins, as it takes just about ~30 seconds to do all the needed bot stuff and finally snapshot.
+- Snapshot itself immidietely closes the special window
+
+**During Special Window:**
+- ❌ You cannot deposit or withdraw NFTs
+- ✅ Bots perform critical operations: voting, claiming rewards, swapping tokens
+- ✅ System synchronizes and prepares for the next epoch
+
+**Outside Special Window:**
+- ✅ You have full access to deposit and withdraw your NFTs
+- ✅ You can claim your accumulated USDC rewards anytime
+- ❌ Bot operations are restricted to prevent interference
+
+### Why Special Windows Are Necessary
+
+This restriction prevents timing attacks and ensures fair reward calculations:
+- Stops users from depositing right before rewards are distributed to dilute others
+- Gives bots uninterrupted time to execute complex multi-step operations
+- Maintains mathematical accuracy in reward distribution calculations
+
+## 💰 From Chaos to USDC: How Rewards Work
+
+### The Complete Reward Pipeline
+
+**Step 1: Earning Rewards**
+Your NFTs earn two types of rewards:
+- **Voting Rewards**: Bribes and fees paid by pools for your votes
+- **Rebase Rewards**: Automatic AERO distributions from the protocol
+
+**Step 2: Collecting Everything**
+After each epoch, our bots automatically:
+- Claim all voting rewards from every pool you voted for
+- Collect any rebase rewards your NFTs earned
+- Gather dozens of different reward tokens into the main contract
+
+**Step 3: Converting to USDC**
+All reward tokens get automatically swapped to USDC because:
+- **Price Stability**: No worrying about reward token volatility
+- **Simplicity**: One stable token instead of managing many different tokens
+- **Liquidity**: USDC is universally accepted and easy to use
+
+**Step 4: Secure Storage & Distribution**
+- Converted USDC is stored in an isolated vault contract
+- Your share is calculated based on your exact voting power contribution
+- You can withdraw your USDC rewards anytime, independent of your NFT deposits
+
+### Proportional Reward Distribution
+
+The math is simple and transparent:
 ```
-_nft_locks_contract: "0xeBf418Fe2512e7E6bd9b87a8F0f294aCDC67e6B4"
-_voter_contract: "0x16613524e02ad97eDfeF371bC883F2F5d6C480A5"
-_epochs_offset_timestamp: "1692835200"
-_rewards_token: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
-_rewards_distributor: "0x227f65131A261548b057215bB1D5Ab2997964C7d"
-_deposit_validator: "0x0000000000000000000000000000000000000000"
-_window_preepoch_duration: "5400"
-_window_postepoch_duration: "1800"
+Your Reward = (Your Voting Power ÷ Total Voting Power) × Total Rewards
 ```
 
-There are 4 main contracts:
+This ensures you get exactly your fair share - no more, no less.
 
-## Core Contracts
-1. **`RewardsVault.sol`**: Generic token storage vault for holding rewards tokens. Automatically deployed by the PermanentLocksPool contract.
-2. **`SwapperV1.sol`**: After rewards are collected, the PermanentLocksPool transfers them to the swapper, which swaps them for stablecoins (usually USDC) and sends them back to the pool. THIS CONTRACT IS REPLACEABLE - we can deploy new swapper versions and update the reference in the pool contract.
-3. **`DepositValidatorV1.sol`**: Validates deposits for PermanentLocksPool contracts by checking minimum lock requirements. THIS CONTRACT IS REPLACEABLE - we can deploy new validator versions and update the reference in the pool contract.
-4. **`PermanentLocksPoolV1.sol`**: Main pool contract that manages user deposits, voting, and reward distribution using batched individual voting strategy. Users deposit veNFT locks and receive proportional rewards.
+## 🛡️ Multiple Layers of Security
 
-## Pool Contract Versions
-We have 3 versions of the permanent locks pool contract, each using different voting strategies:
+### Contract-Level Protection
 
-3. **`PermanentLocksPoolV1.sol`**: 
-   - **Voting Strategy**: Batched individual voting
-   - **How it works**: Makes multiple transactions for voting, batching just a couple of locks with the same voting weights until max gas limit is reached
-   - **Status**: Ready to deploy (no whitelist required)
-   - **Gas cost**: Higher due to multiple transactions
+**Immutable Security Rules**: The core security features cannot be changed by anyone
+**Access Controls**: Even system administrators cannot access user funds
+**Isolation**: Your NFTs and rewards are tracked completely separately from other users
 
-4. **`PermanentLocksPoolV2.sol`**: 
-   - **Voting Strategy**: Delegation to private Aerodrome Relay
-   - **How it works**: Delegates all locks to a private Aerodrome Relay, allowing us to vote with just one lock in one transaction
-   - **Status**: Requires Aerodrome team to whitelist us to create managed lock NFTs
-   - **Gas cost**: Lowest (single transaction voting)
+### Mathematical Guarantees
 
-5. **`PermanentLocksPoolV3.sol`**: 
-   - **Voting Strategy**: Merge/Split flow
-   - **How it works**: Merges all deposited locks into one big lock for voting, then splits on withdrawal
-   - **Status**: Requires Aerodrome team whitelist for split functionality
-   - **Gas cost**: Medium (single voting transaction, but merge/split overhead)
+**Precision Protection**: All calculations use high-precision math to prevent rounding errors
+**Historical Integrity**: Past reward calculations cannot be modified retroactively
+**Proportional Fairness**: The math guarantees you receive your exact proportional share
 
-## The Flow (applies to all pool versions):
-- User deposits permanent lock NFTs into one of the PermanentLocksPool contracts
-- The contract calculates the user's share based on their lock's voting power
-- User can withdraw their locks any time, only outside of *Special Window*
-- *Special Window* is a period when Autopilot bots perform critical actions in the pool contract, saving snapshots, etc.
+### Operational Safeguards
 
-## Voting Process (varies by version):
-- **V1**: At ~2 hours before epoch end, the *Special Window* starts. Users depositing during this time are counted for the next epoch. The bot votes with all locks in multiple transactions, batching locks until gas limit is reached
-- **V2**: Uses delegation to managed NFT - single transaction voting (requires Aerodrome whitelist)  
-- **V3**: Uses merge/split flow - merges all locks into one for voting (requires Aerodrome whitelist for split)
+**Emergency Systems**: Built-in mechanisms keep the protocol running even if bots fail
+**Gap Recovery**: System automatically handles missed epochs without losing your voting power
+**Manual Override**: Community can trigger emergency functions if needed
 
-## Reward Processing:
-- After epoch end, the bot claims rewards and transfers them to `SwapperV1.sol`
-- The swapper swaps rewards for stablecoins and sends them back to the pool contract
-- Claim, transfer and swap are minimum 3 separate transactions
-- With the swap transaction, we save a snapshot of the pool state to calculate user reward shares
-- Users can withdraw their reward share any time
+## 🔧 Controlled Upgradeability
 
-## Epoch Management and Emergency Synchronization System
+### What Can Be Updated
 
-The PermanentLocksPool contracts implement a sophisticated epoch management system that ensures accurate reward distribution and prevents reward dilution through automatic synchronization mechanisms.
+**Upgradeable Components:**
+- **Reward Swapper**: Can be improved for better swap rates and lower fees
+- **Deposit Rules**: Requirements for minimum lock sizes can be adjusted
+- **Bot Permissions**: Authorized operators can be added or removed
 
-### Emergency Snapshot Mechanism
-- Every user function (deposit, withdraw, claim) starts with an `_emergencySnapshot()` call
-- This ensures `last_snapshot_id` is ALWAYS synchronized with the current epoch before any user action
-- Prevents desynchronization issues that could lead to reward calculation errors
-- The emergency snapshot is automatic and transparent to users
+**Immutable Components:**
+- Your NFT ownership and withdrawal rights
+- Core reward calculation mathematics
+- Security access controls and restrictions
+- The fundamental non-custodial architecture
 
-### Per-Epoch Weight Tracking
-- `total_tracked_weight[epoch_id]` stores voting power for each epoch separately
-- This prevents reward dilution when users deposit after voting but before snapshot
-- Each epoch has its own weight calculation, ensuring rewards are distributed only to participants who were eligible for that epoch's voting
+### Governance Limitations
 
-### Special Window Logic
-- During the Special Window (~2 hours before epoch end), user deposits are assigned to the NEXT epoch
-- This ensures deposits during critical bot operations don't interfere with current epoch calculations
-- Weight assignment logic: `if (_isInSpecialWindow(last_snapshot_id)) { deposit_weight_goes_to_next_epoch } else { deposit_weight_goes_to_current_epoch }`
+Even protocol administrators cannot:
+- Access or move your NFTs
+- Modify your personal reward calculations
+- Change core security functions
+- Override your withdrawal rights
 
-### Epoch Gap Handling
-- When multiple epochs are missed, the snapshot functions handle gaps intelligently
-- Gap condition: `current_epoch > last_snapshot_id + 1` (gaps greater than 1 epoch)
-- Gap handling: `total_tracked_weight[current_epoch] += total_tracked_weight[last_snapshot_id] + total_tracked_weight[last_snapshot_id + 1]`
-- This preserves voting power across missed epochs and ensures continuous reward eligibility
+## 🚨 Risk Management
 
-### Automatic Synchronization Architecture
-- The combination of emergency snapshots and per-epoch tracking creates a self-healing system
-- Users cannot accidentally deposit in ways that dilute existing participants' rewards
-- The system automatically handles edge cases like missed epochs or delayed bot operations
-- Weight tracking ensures mathematical accuracy in all reward calculations
+### Smart Contract Security
 
-This architecture guarantees that:
-1. Reward calculations are always mathematically correct
-2. Users who participate in voting receive their fair share
-3. Late deposits don't dilute rewards for existing participants
-4. The system remains synchronized even if epochs are missed
-5. All edge cases are handled automatically without manual intervention
+**Battle-Tested Code**: Uses industry-standard security libraries
+**No Custody Risk**: Your NFTs never leave your control
+**Transparent Operations**: All actions are recorded on the blockchain
 
-## Deposit Validation System
+### Operational Resilience
 
-The deposit validation system provides flexible control over which locks can be deposited into the pool, with upgradeability for changing requirements over time.
+**Bot Failure Protection**: System continues working even if automated bots fail
+**Manual Intervention**: Emergency functions allow community intervention if needed
+**Individual Recovery**: You can always withdraw your NFTs independently
 
-### DepositValidatorV1 Contract
-- **Purpose**: Validates deposits by checking minimum lock voting power requirements
-- **Upgradeability**: Similar to the swapper contract, the pool owner can deploy new validator versions and update the reference
-- **Validation Method**: `validateDepositOrFail()` - uses "OrFail" pattern with internal `require()` statements
-- **Current Logic**: Checks that `veNFT.balanceOfNFT(lock_id) >= minimum_lock_amount`
+### Economic Risk Mitigation
 
-### Integration with Pool Contract
-- Pool contract calls validator during deposit: `deposit_validator.validateDepositOrFail(nft_contract, lock_id, depositor)`
-- If validator address is `address(0)`, validation is skipped (allows deposits without restrictions)
-- Pool owner can update validator reference via `setDepositValidator()` function
-- Validation happens before any state changes in the deposit process
+**Diversification**: Voting strategy spreads across multiple pools
+**Stable Rewards**: USDC conversion eliminates token volatility
+**Performance Tracking**: Continuous optimization based on actual results
 
-### Configurable Parameters
-- **minimum_lock_amount**: Owner-configurable minimum voting power required for deposits
-- Can be updated via `setMinimumLockAmount()` to adjust requirements as needed
-- Supports setting to 0 to allow any size locks
+## 🔍 Complete Transparency
 
-### Upgradeability Pattern
-- New validator versions can implement different validation logic (e.g., whitelist checks, complex eligibility rules)
-- Pool contract owner deploys new validator and calls `setDepositValidator(new_address)`
-- Existing deposits remain unaffected by validator changes
-- Provides flexibility to adapt deposit requirements without redeploying the entire pool contract
+### On-Chain Verification
+
+Everything is publicly verifiable on the Base blockchain:
+- Your NFT deposits and withdrawals
+- All voting decisions and their outcomes
+- Reward calculations and distributions
+- Bot operations and their results
+
+### Real-Time Monitoring
+
+The protocol emits detailed logs for every action:
+- When you deposit or withdraw NFTs
+- When votes are cast with your NFTs
+- When rewards are claimed and distributed
+- When USDC is available for withdrawal
+
+## Bottom Line
+
+Autopilot provides automated veAERO optimization with bank-grade security. Your NFTs remain under your control while sophisticated algorithms maximize your rewards. The protocol is designed to be trustless - you don't need to trust us, just verify the blockchain.

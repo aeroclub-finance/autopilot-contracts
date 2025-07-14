@@ -989,7 +989,7 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
 	}
 
   /// @notice Checks if current time is within special window
-  /// @dev Special window: 2 hours before epoch end to 1 hour after epoch start
+  /// @dev Special window: ~2 hours before epoch end to ~1 hour after epoch start
   /// @param epoch_id The epoch ID to check against
   /// @return true if currently in special window
   function _isInSpecialWindow(
@@ -1069,9 +1069,9 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
 	}
 
 	/// @notice Calculates when special window starts for an epoch
-	/// @dev Special window starts 1 hour after epoch start
+	/// @dev Special window starts ~1 hour after epoch start
 	///      This gives time for any epoch transition processes to complete
-	///      Formula: epoch_start + 1 hour
+	///      Formula: epoch_start + ~1 hour
 	/// @param _epoch_id The epoch ID (0-based)
 	/// @return Timestamp when special window starts for bot operations
 	function _getWrappedEpochStartAt(
@@ -1081,9 +1081,9 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
 	}
 
 	/// @notice Calculates when special window ends for an epoch
-	/// @dev Special window ends 2 hours before epoch end
+	/// @dev Special window ends ~2 hours before epoch end
 	///      This ensures bots have completed all operations before epoch transition
-	///      Formula: epoch_end - 2 hours
+	///      Formula: epoch_end - ~2 hours
 	/// @param _epoch_id The epoch ID (0-based)
 	/// @return Timestamp when special window ends (bot operations must be complete)
 	function _getWrappedEpochEndAt(
