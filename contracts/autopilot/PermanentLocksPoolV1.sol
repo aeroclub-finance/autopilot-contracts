@@ -69,10 +69,6 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
   /// @dev Used for proportional reward calculations, indexed by snapshot_id
   mapping(uint256 => uint256) public total_tracked_weight;
   
-  /// @notice Accumulated scaled rewards per unit of voting power
-  /// @dev This value continuously increases with each reward snapshot
-  uint256 public acc_reward_scaled;
-  
   /// @notice ID of the last reward snapshot (corresponds to epoch ID)
   uint256 public last_snapshot_id;
 
@@ -83,23 +79,34 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
   /// @notice Whether deposits are paused
   bool public deposits_paused = true;
 
+
+  /// @notice Per-epoch accumulated scaled rewards per unit of voting power
+  /// @dev Maps epoch ID to cumulative reward coefficient for that epoch
+  mapping(uint256 => uint256) public acc_reward_scaled_per_epoch;
+
   /// @title Individual Lock Deposit Information Structure
   /// @notice Stores all data related to a specific lock deposit
   /// @dev This struct tracks each lock deposit separately for accurate reward calculation
   struct LockInfo {
     /// @notice Original NFT ID that was deposited (for reference)
     uint256 lock_id;
-    /// @notice acc_reward_scaled value at time when THIS lock was deposited
-    /// @dev Used to calculate rewards earned since this lock's deposit
-    uint256 reward_scaled_start;
+
     /// @notice First snapshot ID that this lock is eligible for
     /// @dev This lock can only claim rewards from snapshots >= this ID
     uint256 start_snapshot_id;
 
 
+    /// @notice Last epoch ID for which rewards were calculated for this lock
+    /// @dev Used to calculate rewards earned since last claim or rebase update
+    uint256 rewards_snapshot_id;
+
+
+    /// @notice Current voting power of this lock (updated after rebase)
     uint256 voting_power;
 
 
+    /// @notice Accumulated rewards waiting to be claimed
+    /// @dev These are rewards calculated but not yet distributed to user
     uint256 postponed_rewards;
   }
   
@@ -119,8 +126,7 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
   /// @param lock_index Index of this lock in user's lock array
   /// @param amount Voting power of the deposited lock
   /// @param start_snapshot_id Starting snapshot ID for this lock
-  /// @param reward_scaled_start Starting reward scaled value for this lock
-  event Deposit(address indexed user, uint256 indexed deposited_nft_id, uint256 lock_index, uint256 amount, uint256 start_snapshot_id, uint256 reward_scaled_start);
+  event Deposit(address indexed user, uint256 indexed deposited_nft_id, uint256 lock_index, uint256 amount, uint256 start_snapshot_id);
   
   /// @notice Emitted when a user withdraws a lock from the vault
   /// @param user Address of the user making the withdrawal
@@ -336,8 +342,8 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
 
     LockInfo memory new_lock = LockInfo({
       lock_id: _lock_id,
-      reward_scaled_start: acc_reward_scaled,
       start_snapshot_id: eligible_epoch,
+      rewards_snapshot_id: eligible_epoch,
       voting_power: amount,
       postponed_rewards: 0
     });
@@ -348,7 +354,7 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
     uint256 new_lock_index = user_locks[msg.sender].length - 1;
     lock_id_to_user_index[_lock_id] = new_lock_index;
 
-    emit Deposit(msg.sender, _lock_id, new_lock_index, amount, eligible_epoch, acc_reward_scaled);
+    emit Deposit(msg.sender, _lock_id, new_lock_index, amount, eligible_epoch);
   }
 
   /// @notice Withdraws a specific lock by lock ID
@@ -430,6 +436,7 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
     uint256 _for_epoch_id
   ) external onlyPermittedOperator {
 
+    // Ensure there is not error when voting and snapshot did not pass somehow
     _emergencySnapshot();
 
 		_isInSpecialWindowOrFail(last_snapshot_id);
@@ -505,10 +512,12 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
 
       LockInfo storage lock_info = user_locks[nft_owner][nft_index];
 
-      uint256 new_pending_rewards = _calcNewPendingRewards(lock_info);
-      lock_info.postponed_rewards += new_pending_rewards;
-      lock_info.reward_scaled_start = acc_reward_scaled;
-
+      if(last_snapshot_id > lock_info.rewards_snapshot_id) {
+        uint256 new_pending_rewards = _calcNewPendingRewards(lock_info);
+        lock_info.postponed_rewards += new_pending_rewards;
+        lock_info.rewards_snapshot_id = last_snapshot_id;
+      }
+      
       require(nft_owner != address(0), "NFT not in vault");
 
       total_before_balance += lock_info.voting_power;
@@ -573,6 +582,9 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
   /// @dev Requirements:
   ///      - Cannot snapshot same epoch twice (must be new epoch)
   ///      - If reward_amount > 0, requires active deposits (total_amount > 0)
+  ///      - MUST be called during special window
+  /// @dev This function CANNOT be called if several epochs were not snapshoted
+  ///      If this happens, use emergencySnapshot() to create a snapshot with 0 rewards
   /// @param reward_amount Amount of rewards to distribute (in reward token)
   ///        Can be 0 if no rewards were generated this epoch
   function snapshotRewards(uint256 reward_amount) external onlySwapper {
@@ -586,6 +598,7 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
       "Already snapshoted this epoch"
     );
 
+    uint256 reward_scaled = 0;
     if(reward_amount > 0) {
 
       // Transfer rewards from swapper to rewards vault
@@ -608,25 +621,21 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
 
         // Calculate coefficient: reward_scaled = scaled_reward_amount / total_tracked_weight
         // We know about small inefficiency in this formula, but it is negligible
-        // and actual losses are less then 1$ in over million years
-        uint256 reward_scaled = (scaled_reward_amount * SCALE) / total_tracked_weight[last_snapshot_id];
-
-        // Increase accumulator
-        acc_reward_scaled += reward_scaled;
+        // and actual losses are less then 1$ in over thousand years
+        reward_scaled = (scaled_reward_amount * SCALE) / total_tracked_weight[last_snapshot_id];
       }
     }
 
-    if(current_epoch > last_snapshot_id + 1) {
-      total_tracked_weight[current_epoch] += total_tracked_weight[last_snapshot_id] + total_tracked_weight[last_snapshot_id + 1];
-    } else {
-      // Copy previous epoch's total tracked weight to new epoch
-      total_tracked_weight[current_epoch] += total_tracked_weight[last_snapshot_id];
-    }
+    // Update per-epoch accumulator: current epoch = previous epoch + new rewards
+    acc_reward_scaled_per_epoch[current_epoch] = acc_reward_scaled_per_epoch[last_snapshot_id] + reward_scaled;
+
+    // Copy previous epoch's total tracked weight to new epoch
+    total_tracked_weight[current_epoch] += total_tracked_weight[last_snapshot_id];
     
     // Update snapshot ID to current epoch
     last_snapshot_id = current_epoch;
 
-    emit RewardsSnapshot(reward_amount, last_snapshot_id, acc_reward_scaled);
+    emit RewardsSnapshot(reward_amount, last_snapshot_id, acc_reward_scaled_per_epoch[last_snapshot_id]);
   }
 
   /// @notice Internal emergency snapshot mechanism to prevent reward calculation issues
@@ -647,14 +656,28 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
 
       // if bots somehow failed to snapshot several or more epochs
       if(current_epoch > last_snapshot_id + 1) {
+
+        // If some user deposited during special window - we need to fill the acc_reward_scaled for 
+        // the epoch he is starting from
+        acc_reward_scaled_per_epoch[last_snapshot_id + 1] = acc_reward_scaled_per_epoch[last_snapshot_id];
+
+        // Here we are copying acc_reward_scaled from last WORKING epoch to the new one
+        acc_reward_scaled_per_epoch[current_epoch] = acc_reward_scaled_per_epoch[last_snapshot_id];
+
+        // Again if some users deposited during special window we need to copy data from last WORKING epoch
+        // AND from epoch his voting power was postponed to (N & N+1) to current epoch weights
         total_tracked_weight[current_epoch] += total_tracked_weight[last_snapshot_id] + total_tracked_weight[last_snapshot_id + 1];
       } else {
+
+        // Here we are copying acc_reward_scaled from last WORKING epoch to the new one
+        acc_reward_scaled_per_epoch[current_epoch] = acc_reward_scaled_per_epoch[last_snapshot_id];
+
         // Copy previous epoch's total tracked weight to new epoch
         total_tracked_weight[current_epoch] += total_tracked_weight[last_snapshot_id];
       }
 
       last_snapshot_id = current_epoch;
-      emit RewardsSnapshot(0, last_snapshot_id, acc_reward_scaled);
+      emit RewardsSnapshot(0, last_snapshot_id, acc_reward_scaled_per_epoch[last_snapshot_id]);
       emit EmergencySnapshot(last_snapshot_id);
       return true;
     } else {
@@ -837,16 +860,11 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
   /// @param _owner Address of the lock owner
   /// @param _lock_id Lock ID to calculate pending rewards for
   /// @return pending_rewards Amount of pending rewards for this lock
-  function getPendingRewards(address _owner, uint256 _lock_id) external view returns (uint256 pending_rewards) {
+  function getPendingRewards(address _owner, uint256 _lock_id) external view returns (uint256) {
     uint256 lock_index = _getLockIndexOrFail(_owner, _lock_id);
     LockInfo storage lock_info = user_locks[_owner][lock_index];
     
-    // Return 0 if lock hasn't reached its start snapshot yet
-    if (last_snapshot_id <= lock_info.start_snapshot_id) {
-      return 0;
-    }
-    
-    pending_rewards = _calcPendingRewards(lock_info) / (10**(DECIMALS - reward_token_decimals));
+    return _calcPendingRewards(lock_info) / (10**(DECIMALS - reward_token_decimals));
   }
 
 
@@ -909,10 +927,6 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
     uint256 lock_index = _getLockIndexOrFail(recipient, _lock_id);
     LockInfo storage lock_info = user_locks[recipient][lock_index];
     
-    if(last_snapshot_id <= lock_info.start_snapshot_id) {
-      return; // Skip locks that are not eligible for rewards yet
-    }
-    
     uint256 lock_weight = lock_info.voting_power;
     if(lock_weight == 0) {
       return; // Skip locks with zero voting power
@@ -924,8 +938,8 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
     if(pending_rewards > 0) {
 
       // Update this lock's reward baseline
-      lock_info.reward_scaled_start = acc_reward_scaled;
       lock_info.postponed_rewards = 0; // Reset postponed rewards after claiming
+      lock_info.rewards_snapshot_id = last_snapshot_id; // Update to current epoch
 
       // Scale down pending_rewards from internal DECIMALS (18) to reward token decimals
       uint256 scaled_down_rewards = pending_rewards / (10**(DECIMALS - reward_token_decimals));
@@ -935,14 +949,24 @@ contract PermanentLocksPoolV1 is IPermanentLocksPoolV1 {
     }
   }
 
+  /// @notice Calculates new pending rewards for a lock since last update
+  /// @dev Uses per-epoch accumulator to calculate rewards earned between epochs
+  /// @param _lock_info Lock information to calculate rewards for
+  /// @return New pending rewards amount (before scaling down to token decimals)
   function _calcNewPendingRewards(
     LockInfo storage _lock_info
-  ) internal view returns (uint256 new_pending_rewards) {
-    uint256 delta_acc = acc_reward_scaled - _lock_info.reward_scaled_start;
-    if (delta_acc > 0) {
-      new_pending_rewards = (_lock_info.voting_power * delta_acc) / SCALE;
+  ) internal view returns (uint256) {
+
+    if(last_snapshot_id > _lock_info.rewards_snapshot_id) {
+      // Calculate difference in accumulated rewards per unit since last update
+      uint256 delta_acc = acc_reward_scaled_per_epoch[last_snapshot_id] - acc_reward_scaled_per_epoch[_lock_info.rewards_snapshot_id];
+      if (delta_acc > 0) {
+        return (_lock_info.voting_power * delta_acc) / SCALE;
+      } else {
+        return 0;
+      }
     } else {
-      new_pending_rewards = 0;
+      return 0;
     }
   }
 
