@@ -55,5 +55,28 @@ contract VelodromePermanentLocksPoolV2 is PermanentLocksPoolV2 {
     _root_voting_rewards_factory.setRecipient(_chain_id, _receiver_address);
     emit TokenLeafReceiverChanged(_chain_id, _receiver_address);
   }
+
+  /// @notice Internal setter for window durations with comprehensive validation
+  /// @dev Validates and sets both window duration parameters
+  /// @param _window_preepoch_duration Pre-epoch window duration to set
+  /// @param _window_postepoch_duration Post-epoch window duration to set
+  function  _setWindowDurations(
+    uint256 _window_preepoch_duration,
+    uint256 _window_postepoch_duration
+  ) internal override {
+
+    // wait 2 days after last_snapshot_id_updated_at to avoid griefing by owner
+    require(block.timestamp > (last_snapshot_id_updated_at + 3 days), "ZZ");
+    require(deposits_paused, "C");
+    require(_window_preepoch_duration >= 2.5 hours, "D");
+    require(_window_postepoch_duration >= 1.5 hours, "E");
+    require(
+      _window_preepoch_duration + _window_postepoch_duration < 3 days,
+      "F"
+    );
+
+    window_preepoch_duration = _window_preepoch_duration;
+    window_postepoch_duration = _window_postepoch_duration;
+  }
 	
 }

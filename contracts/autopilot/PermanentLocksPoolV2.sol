@@ -1137,7 +1137,7 @@ contract PermanentLocksPoolV2 is IPermanentLocksPoolV2 {
   function _setWindowDurations(
     uint256 _window_preepoch_duration,
     uint256 _window_postepoch_duration
-  ) internal {
+  ) internal virtual {
 
     // wait 2 days after last_snapshot_id_updated_at to avoid griefing by owner
     require(block.timestamp > (last_snapshot_id_updated_at + 3 days), "ZZ");
